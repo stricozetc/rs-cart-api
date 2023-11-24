@@ -1,0 +1,40 @@
+service: nest-aws-app
+frameworkVersion: "3"
+
+provider:
+  name: aws
+  runtime: nodejs18.x
+  region: us-east-1
+  apiGateway:
+    restApiEndpointType: REGIONAL
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - lambda:InvokeFunction
+      Resource: "arn:aws:lambda:us-east-1:243868715591:function:nest-aws-app-dev-main"
+  environment:
+    PG_HOST: task8.ckhk1s5xfsne.us-east-1.rds.amazonaws.com
+    PG_PORT: 5432
+    PG_DATABASE: postgres
+    PG_USERNAME: postgres
+    PG_PASSWORD: MXSFYokWAuxgJulKTYqt
+
+plugins:
+  - serverless-iam-roles-per-function
+  - serverless-offline
+
+custom:
+  serverless-offline:
+    logLevel: debug
+
+functions:
+  main:
+    handler: dist/main.handler
+    timeout: 10
+    events:
+      - http:
+          method: ANY
+          path: /
+      - http:
+          method: ANY
+          path: '{proxy+}'
