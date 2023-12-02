@@ -1,55 +1,83 @@
 import { Injectable } from '@nestjs/common';
 
 import { v4 } from 'uuid';
+import { Client } from 'pg';
 
 import { Cart } from '../models';
 
 @Injectable()
 export class CartService {
-  private userCarts: Record<string, Cart> = {};
-
-  findByUserId(userId: string): Cart {
-    return this.userCarts[ userId ];
+  private PG_HOST = process.env.PG_HOST;
+  private PG_PORT = process.env.PG_PORT;
+  private PG_DATABASE = process.env.PG_DATABASE;
+  private PG_USERNAME = process.env.PG_USERNAME;
+  private PG_PASSWORD = process.env.PG_PASSWORD;
+  private dbOptions = {
+    host: this.PG_HOST,
+    port: this.PG_PORT,
+    database: this.PG_DATABASE,
+    user: this.PG_USERNAME,
+    password: this.PG_PASSWORD,
+    ssl: {
+      rejectUnauthorized: false,
+    },
+    connectionTimeoutMillis: 10000,
   }
 
-  createByUserId(userId: string) {
-    const id = v4(v4());
-    const userCart = {
-      id,
-      items: [],
-    };
-
-    this.userCarts[ userId ] = userCart;
-
-    return userCart;
+  private async withClient<T>(callback: (client: Client) => Promise<T>): Promise<T> {
+    const client = new Client(this.dbOptions);
+    await client.connect();
+    try {
+      return await callback(client);
+    } catch (e) {
+      console.error(e);
+      throw e;
+    } finally {
+      await client.end();
+    }
   }
 
-  findOrCreateByUserId(userId: string): Cart {
-    const userCart = this.findByUserId(userId);
+  findByUserId(userId: string): Promise<Cart | null> {
+    return this.withClient(async (client) => {
+      const result = await client.query('SELECT * FROM carts WHERE user_id = $1', [userId]);
+      return result.rows[0] || null;
+    });
+  }
 
-    if (userCart) {
-      return userCart;
+  createByUserId(userId: string): Promise<Cart> {
+    return this.withClient(async (client) => {
+      const id = v4();
+      const result = await client.query('INSERT INTO carts (id, user_id, created_at, updated_at, status) VALUES ($1, $2, NOW(), NOW(), $3) RETURNING *', [id, userId, 'OPEN']);
+      return result.rows[0];
+    });
+  }
+
+  async findOrCreateByUserId(userId: string): Promise<Cart> {
+    const existingCart = await this.findByUserId(userId);
+
+    if (existingCart) {
+      return existingCart;
     }
 
     return this.createByUserId(userId);
   }
 
-  updateByUserId(userId: string, { items }: Cart): Cart {
-    const { id, ...rest } = this.findOrCreateByUserId(userId);
+  async updateByUserId(userId: string, { items }: Cart): Promise<Cart | null> {
+    const existingCart = await this.findByUserId(userId);
 
-    const updatedCart = {
-      id,
-      ...rest,
-      items: [ ...items ],
+    if (!existingCart) {
+      return null;
     }
 
-    this.userCarts[ userId ] = { ...updatedCart };
-
-    return { ...updatedCart };
+    return this.withClient(async (client) => {
+      const result = await client.query('UPDATE carts SET items = $1, updated_at = NOW() WHERE user_id = $2 RETURNING *', [items, userId]);
+      return result.rows[0] || null;
+    });
   }
 
-  removeByUserId(userId): void {
-    this.userCarts[ userId ] = null;
+  async removeByUserId(userId): Promise<void> {
+    return this.withClient(async (client) => {
+      await client.query('DELETE FROM carts WHERE user_id = $1', [userId]);
+    });
   }
-
 }
